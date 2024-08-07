@@ -63,7 +63,7 @@ def combine_csv_files():
 # Function to process combined data and generate reports
 def process_combined_data(df):
     # Convert 'total_sales' to float
-    df.loc[:, 'total_sales'] = pd.to_numeric(df.loc[:, 'total_sales'], errors='coerce')
+    df.loc[:, 'total_sales'] = pd.to_numeric(df.loc[:, 'total_sales'], errors='coerce', downcast='float')
 
     # Drop rows where total_sales is 0 and product_title is NaN
     df = df.loc[~((df.loc[:, 'total_sales'] == 0) & (df.loc[:, 'product_title'].isna()))]
@@ -95,7 +95,7 @@ def process_combined_data(df):
     df.loc[:, 'first_product'] = df.loc[:, 'first_product'].ffill().bfill()
 
     # Convert object columns to appropriate dtypes
-    df = df.infer_objects(copy=False)
+    df = df.infer_objects()
 
     # Create 'purchase_month' column
     df.loc[:, 'purchase_month'] = df.loc[:, 'day'].dt.to_period('M')
