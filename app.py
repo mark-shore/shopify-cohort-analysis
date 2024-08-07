@@ -52,85 +52,80 @@ def fetch_csv_from_airtable(record):
         raise ValueError(f"Error reading CSV file: {str(e)}")
 
 # Function to combine CSV files from Airtable
-def combine_csv_files():
+def combine_csv_files(batch_size=5):
     csv_records = airtable_uploads.all()
-    dataframes = []
-    for record in csv_records:
-        dataframes.append(fetch_csv_from_airtable(record))
-    combined_data = pd.concat(dataframes, ignore_index=True)
+    combined_data = pd.DataFrame()
+    for i in range(0, len(csv_records), batch_size):
+        batch_records = csv_records[i:i+batch_size]
+        batch_data = [fetch_csv_from_airtable(record) for record in batch_records]
+        batch_combined = pd.concat(batch_data, ignore_index=True)
+        combined_data = pd.concat([combined_data, batch_combined], ignore_index=True)
     return combined_data
 
 # Function to process combined data and generate reports
 def process_combined_data(df):
-    # Convert 'total_sales' to float
+    # Convert 'total_sales' to float with downcasting
     df.loc[:, 'total_sales'] = pd.to_numeric(df.loc[:, 'total_sales'], errors='coerce', downcast='float')
 
     # Drop rows where total_sales is 0 and product_title is NaN
-    df = df.loc[~((df.loc[:, 'total_sales'] == 0) & (df.loc[:, 'product_title'].isna()))]
+    df = df.loc[~((df.loc[:, 'total_sales'] == 0) & (df.loc[:, 'product_title'].isna()))].copy()
 
     # Convert 'day' to datetime, dropping rows with invalid dates
-    df.loc[:, 'day'] = pd.to_datetime(df.loc[:, 'day'], errors='coerce')
-
-    # Drop rows with invalid dates
-    df = df.dropna(subset=['day'])
+    df['day'] = pd.to_datetime(df['day'], errors='coerce')
+    df.dropna(subset=['day'], inplace=True)
 
     # Sort the dataframe by 'customer_email' and 'day' in ascending order, and 'product_title' in descending order
     df = df.sort_values(by=['customer_email', 'day', 'product_title'], ascending=[True, True, False])
 
     # Identify the first purchase order for each customer
     first_order = df.groupby('customer_email').first().reset_index()[['customer_email', 'order_id', 'day', 'product_title']]
-    first_order = first_order.rename(columns={'order_id': 'first_order_id', 'day': 'first_purchase_day', 'product_title': 'first_product'})
+    first_order.rename(columns={'order_id': 'first_order_id', 'day': 'first_purchase_day', 'product_title': 'first_product'}, inplace=True)
 
     # Merge first order details
     df = pd.merge(df, first_order, on='customer_email', how='left', suffixes=('', '_first'))
 
     # Ensure first_purchase_day is in datetime format
-    df.loc[:, 'first_purchase_day'] = pd.to_datetime(df.loc[:, 'first_purchase_day'], errors='coerce')
+    df['first_purchase_day'] = pd.to_datetime(df['first_purchase_day'], errors='coerce')
 
     # Mark repeat purchases
     df.loc[:, 'is_first_purchase'] = df.loc[:, 'order_id'] == df.loc[:, 'first_order_id']
 
     # Forward fill the first purchase details
-    df.loc[:, 'first_purchase_day'] = df.loc[:, 'first_purchase_day'].ffill().bfill()
-    df.loc[:, 'first_product'] = df.loc[:, 'first_product'].ffill().bfill()
-
-    # Convert object columns to appropriate dtypes
-    df = df.infer_objects()
+    df.loc[:, 'first_purchase_day'] = df['first_purchase_day'].ffill().bfill()
+    df.loc[:, 'first_product'] = df['first_product'].ffill().bfill()
 
     # Create 'purchase_month' column
-    df.loc[:, 'purchase_month'] = df.loc[:, 'day'].dt.to_period('M')
-
-    # Ensure 'total_sales' is float
-    df.loc[:, 'total_sales'] = df.loc[:, 'total_sales'].astype(float)
+    df.loc[:, 'purchase_month'] = df['day'].dt.to_period('M')
 
     return df
 
 # Function to generate cohort based on Month of first purchase
 def generate_monthly_cohort(df):
-    df.loc[:, 'first_purchase_day'] = df.groupby('customer_email')['day'].transform('min')
-    df.loc[:, 'first_purchase_day'] = pd.to_datetime(df.loc[:, 'first_purchase_day'], errors='coerce')
-    df.loc[:, 'cohort'] = df.loc[:, 'first_purchase_day'].dt.to_period('M')
+    df['first_purchase_day'] = df.groupby('customer_email')['day'].transform('min')
+    df['first_purchase_day'] = pd.to_datetime(df['first_purchase_day'], errors='coerce')
+    df['cohort'] = df['first_purchase_day'].dt.to_period('M')
     return df
 
 # Function to generate cohort based on First Product Purchased
 def generate_first_product_cohort(df):
     df = df.dropna(subset=['customer_email'])
     df = df.sort_values(by=['customer_email', 'day'])
-    df.loc[:, 'first_product'] = df.loc[:, 'first_product'].astype(str)
-    df.loc[:, 'cohort'] = df.loc[:, 'first_product'].astype(str)
+    df['first_product'] = df['first_product'].astype(str)
+    df['cohort'] = df['first_product'].astype(str)
     return df
 
 # Function to generate reports for a given cohort
 def generate_reports_for_cohort(df, cohort_type):
     if cohort_type == 'Month':
-        df.loc[:, 'cohort'] = df.loc[:, 'first_purchase_day'].dt.to_period('M')
+        df['cohort'] = df['first_purchase_day'].dt.to_period('M')
     elif cohort_type == 'First Product Purchased':
-        df.loc[:, 'first_product'] = df.loc[:, 'first_product'].astype(str)
-        df.loc[:, 'cohort'] = df.loc[:, 'first_product']
+        df['first_product'] = df['first_product'].astype(str)
+        df['cohort'] = df['first_product']
     else:
         raise ValueError("Invalid cohort type")
     
-    df['months_since_first_purchase'] = df.apply(lambda x: (x['day'].year - x['first_purchase_day'].year) * 12 + (x['day'].month - x['first_purchase_day'].month), axis=1)
+    df['months_since_first_purchase'] = ((df['day'].dt.year - df['first_purchase_day'].dt.year) * 12 +
+                                         (df['day'].dt.month - df['first_purchase_day'].dt.month))
     
     cohort_monthly_spend = df.groupby(['cohort', 'months_since_first_purchase'])['total_sales'].sum().reset_index()
     cohort_monthly_spend.columns = ['cohort', 'months_since_first_purchase', 'total_sales']
@@ -211,4 +206,4 @@ def generate_reports():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port)
