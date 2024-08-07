@@ -174,7 +174,7 @@ def generate_reports_for_cohort(df, cohort_type):
     return ltv, revenue, repeat_purchase_rate
 
 # Function to generate and upload reports to the webhook
-def generate_and_upload_reports(record_id):
+def generate_and_upload_reports():
     # Combine all CSV files
     combined_data = combine_csv_files()
     # Process the combined data
@@ -217,7 +217,6 @@ def generate_and_upload_reports(record_id):
                         'cohort_type': cohort_type,
                         'start_date': combined_data['day'].min().strftime('%Y-%m-%d'),
                         'end_date': combined_data['day'].max().strftime('%Y-%m-%d'),
-                        'record_id': record_id
                     }
                 )
                 response.raise_for_status()
@@ -226,9 +225,7 @@ def generate_and_upload_reports(record_id):
 @app.route('/generate_reports', methods=['POST'])
 def generate_reports():
     try:
-        data = request.get_json()
-        record_id = data['record_id']
-        generate_and_upload_reports(record_id)
+        generate_and_upload_reports()
         return jsonify({"status": "success"}), 200
     except Exception as e:
         print(f"Error: {e}")
