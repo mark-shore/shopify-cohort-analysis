@@ -32,15 +32,11 @@ pd.set_option('future.no_silent_downcasting', True)
 # Function to fetch CSV from Airtable
 def fetch_csv_from_airtable(record):
     try:
-        # Extract fields from the Airtable record
-        print(f"Record fields: {record['fields']}")
         attachments = record['fields'].get('CSV File', None)
         if not attachments:
             raise ValueError("CSV File field is missing in the record.")
         
-        # Get the URL of the CSV file
         csv_url = attachments[0]['url']
-        print(f"CSV URL: {csv_url}")
         response = requests.get(csv_url)
         response.raise_for_status()
         
@@ -58,10 +54,10 @@ def fetch_csv_from_airtable(record):
 # Function to combine CSV files from Airtable
 def combine_csv_files():
     csv_records = airtable_uploads.all()
-    combined_data = pd.DataFrame()
+    dataframes = []
     for record in csv_records:
-        csv_data = fetch_csv_from_airtable(record)
-        combined_data = pd.concat([combined_data, csv_data])
+        dataframes.append(fetch_csv_from_airtable(record))
+    combined_data = pd.concat(dataframes, ignore_index=True)
     return combined_data
 
 # Function to process combined data and generate reports
@@ -120,14 +116,12 @@ def generate_monthly_cohort(df):
 def generate_first_product_cohort(df):
     df = df.dropna(subset=['customer_email'])
     df = df.sort_values(by=['customer_email', 'day'])
-    # Explicitly cast to string dtype before assignment
     df.loc[:, 'first_product'] = df.loc[:, 'first_product'].astype(str)
     df.loc[:, 'cohort'] = df.loc[:, 'first_product'].astype(str)
     return df
 
 # Function to generate reports for a given cohort
 def generate_reports_for_cohort(df, cohort_type):
-    # Determine cohort based on the type
     if cohort_type == 'Month':
         df.loc[:, 'cohort'] = df.loc[:, 'first_purchase_day'].dt.to_period('M')
     elif cohort_type == 'First Product Purchased':
@@ -136,31 +130,24 @@ def generate_reports_for_cohort(df, cohort_type):
     else:
         raise ValueError("Invalid cohort type")
     
-    # Calculate time since the first purchase for each customer
     df['months_since_first_purchase'] = df.apply(lambda x: (x['day'].year - x['first_purchase_day'].year) * 12 + (x['day'].month - x['first_purchase_day'].month), axis=1)
     
-    # Group by cohort and months since first purchase, and calculate metrics
     cohort_monthly_spend = df.groupby(['cohort', 'months_since_first_purchase'])['total_sales'].sum().reset_index()
     cohort_monthly_spend.columns = ['cohort', 'months_since_first_purchase', 'total_sales']
     cohort_monthly_spend['cumulative_total_spent'] = cohort_monthly_spend.groupby('cohort')['total_sales'].cumsum()
     
-    # Calculate cohort sizes
     cohort_sizes = df.groupby('cohort')['customer_email'].nunique().reset_index()
     cohort_sizes.columns = ['cohort', 'cohort_size']
     
-    # Merge cohort sizes into the spend data
     cohort_monthly_spend = pd.merge(cohort_monthly_spend, cohort_sizes, on='cohort')
     cohort_monthly_spend['avg_cumulative_total_spent'] = cohort_monthly_spend['cumulative_total_spent'] / cohort_monthly_spend['cohort_size']
     
-    # Pivot tables for LTV and revenue
     ltv = cohort_monthly_spend.pivot_table(index='cohort', columns='months_since_first_purchase', values='avg_cumulative_total_spent', fill_value=0)
     revenue = cohort_monthly_spend.pivot_table(index='cohort', columns='months_since_first_purchase', values='total_sales', fill_value=0)
     
-    # Add cohort sizes as the first column
     ltv = pd.concat([cohort_sizes.set_index('cohort'), ltv], axis=1)
     revenue = pd.concat([cohort_sizes.set_index('cohort'), revenue], axis=1)
     
-    # Calculate repeat purchase rate
     df.loc[:, 'is_repeat_purchase'] = ~df.loc[:, 'is_first_purchase']
     repeat_purchasers = df.loc[df.loc[:, 'is_repeat_purchase']].groupby(['cohort', 'months_since_first_purchase'])['customer_email'].nunique().reset_index()
     repeat_purchasers.columns = ['cohort', 'months_since_first_purchase', 'repeat_purchasers']
@@ -168,33 +155,26 @@ def generate_reports_for_cohort(df, cohort_type):
     repeat_purchasers['repeat_purchase_rate'] = repeat_purchasers['repeat_purchasers'] / repeat_purchasers['cohort_size']
     repeat_purchase_rate = repeat_purchasers.pivot_table(index='cohort', columns='months_since_first_purchase', values='repeat_purchase_rate', fill_value=0)
     
-    # Add cohort sizes as the first column
     repeat_purchase_rate = pd.concat([cohort_sizes.set_index('cohort'), repeat_purchase_rate], axis=1)
     
     return ltv, revenue, repeat_purchase_rate
 
 # Function to generate and upload reports to the webhook
 def generate_and_upload_reports():
-    # Combine all CSV files
     combined_data = combine_csv_files()
-    # Process the combined data
     combined_data = process_combined_data(combined_data)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    # Define cohort types
     cohort_types = ['Month', 'First Product Purchased']
 
     for cohort_type in cohort_types:
-        # Generate cohort data based on the cohort type
         if cohort_type == 'Month':
             cohort_data = generate_monthly_cohort(combined_data)
         else:
             cohort_data = generate_first_product_cohort(combined_data)
 
-        # Generate reports for the cohort
         ltv, revenue, repeat_purchase_rate = generate_reports_for_cohort(cohort_data, cohort_type)
         
-        # Define reports to be generated
         reports = {
             'LTV': ltv,
             'Revenue': revenue,
@@ -202,12 +182,10 @@ def generate_and_upload_reports():
         }
 
         for report_type, report_data in reports.items():
-            # Save each report to a CSV file
             report_filename = f"{report_type}_{cohort_type}_{timestamp}.csv"
             report_path = os.path.join(tempfile.gettempdir(), report_filename)
             report_data.to_csv(report_path)
 
-            # Upload the report to the webhook
             with open(report_path, 'rb') as file:
                 response = requests.post(
                     MAKE_WEBHOOK_URL,
