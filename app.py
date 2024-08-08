@@ -52,8 +52,8 @@ def fetch_csv_from_airtable(record):
         raise ValueError(f"Error reading CSV file: {str(e)}")
 
 # Function to combine CSV files from Airtable
-def combine_csv_files(batch_size=5):
-    csv_records = airtable_uploads.all()
+def combine_csv_files(selected_brand, batch_size=5):
+    csv_records = airtable_uploads.all(formula=f"FIND('{selected_brand}', ARRAYJOIN({{Brand}}))")
     combined_data = pd.DataFrame()
     for i in range(0, len(csv_records), batch_size):
         batch_records = csv_records[i:i+batch_size]
@@ -155,8 +155,8 @@ def generate_reports_for_cohort(df, cohort_type):
     return ltv, revenue, repeat_purchase_rate
 
 # Function to generate and upload reports to the webhook
-def generate_and_upload_reports():
-    combined_data = combine_csv_files()
+def generate_and_upload_reports(selected_brand):
+    combined_data = combine_csv_files(selected_brand)
     combined_data = process_combined_data(combined_data)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -198,7 +198,12 @@ def generate_and_upload_reports():
 @app.route('/generate_reports', methods=['POST'])
 def generate_reports():
     try:
-        generate_and_upload_reports()
+        data = request.get_json()
+        selected_brand = data.get('brand')
+        if not selected_brand:
+            return jsonify({"error": "Brand not specified"}), 400
+        
+        generate_and_upload_reports(selected_brand)
         return jsonify({"status": "success"}), 200
     except Exception as e:
         print(f"Error: {e}")
