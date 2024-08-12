@@ -52,8 +52,8 @@ def fetch_csv_from_airtable(record):
         raise ValueError(f"Error reading CSV file: {str(e)}")
 
 # Function to combine CSV files from Airtable
-def combine_csv_files(selected_brand, batch_size=5):
-    csv_records = airtable_uploads.all(formula=f"FIND('{selected_brand}', ARRAYJOIN({{Brand}}))")
+def combine_csv_files(brand_name, batch_size=5):
+    csv_records = airtable_uploads.all(formula=f"FIND('{brand_name}', ARRAYJOIN({{Brand}}))")
     combined_data = pd.DataFrame()
     for i in range(0, len(csv_records), batch_size):
         batch_records = csv_records[i:i+batch_size]
@@ -155,8 +155,8 @@ def generate_reports_for_cohort(df, cohort_type):
     return ltv, revenue, repeat_purchase_rate
 
 # Function to generate and upload reports to the webhook
-def generate_and_upload_reports(selected_brand):
-    combined_data = combine_csv_files(selected_brand)
+def generate_and_upload_reports(brand_name, brand_id):
+    combined_data = combine_csv_files(brand_name)
     combined_data = process_combined_data(combined_data)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -190,6 +190,7 @@ def generate_and_upload_reports(selected_brand):
                         'cohort_type': cohort_type,
                         'start_date': combined_data['day'].min().strftime('%Y-%m-%d'),
                         'end_date': combined_data['day'].max().strftime('%Y-%m-%d'),
+                        'brand_id': brand_id,
                     }
                 )
                 response.raise_for_status()
@@ -199,11 +200,14 @@ def generate_and_upload_reports(selected_brand):
 def generate_reports():
     try:
         data = request.get_json()
-        selected_brand = data.get('brand')
-        if not selected_brand:
-            return jsonify({"error": "Brand not specified"}), 400
+        brand_name = data.get('brand_name')
+        brand_id = data.get('brand_id')
+        if not brand_name:
+            return jsonify({"error": "Brand name not specified"}), 400
+        if not brand_id:
+            return jsonify({"error": "Brand ID not specified"}), 400
         
-        generate_and_upload_reports(selected_brand)
+        generate_and_upload_reports(brand_name, brand_id)
         return jsonify({"status": "success"}), 200
     except Exception as e:
         print(f"Error: {e}")
